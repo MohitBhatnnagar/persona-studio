@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: persona-studio
+    runtime: node
+    plan: free
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: node server/index.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: IMAGE_MODEL
+        value: gpt-image-2
+      - key: DEMO_TOTAL
+        value: "30"
+      - key: NODE_VERSION
+        value: "20"

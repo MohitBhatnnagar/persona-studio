@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+.env*
+*.log
+real-test.png
+*.png
+!public/**/*.png
