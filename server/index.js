@@ -14,27 +14,45 @@ async function realImage(buf, mime, p){
   const fd = new FormData(); fd.append("model", MODEL); fd.append("prompt", p); fd.append("quality","medium"); fd.append("size","1024x1536"); fd.append("image", new Blob([buf],{type:mime}), "ref.png");
   const r = await fetch("https://api.openai.com/v1/images/edits",{method:"POST",headers:{Authorization:`Bearer ${KEY}`},body:fd});
   if(!r.ok){console.error("image api",r.status,(await r.text()).slice(0,300)); throw new Error("Image service error "+r.status);} const j = await r.json(); return "data:image/png;base64,"+j.data[0].b64_json; }
-async function run(job, file){ // one image at a time, cancellable
-  for(let i=0;i<job.total;i++){ if(job.status==="cancelled") return;
-    try{ job.images.push(MOCK ? (await new Promise(r=>setTimeout(r,400)), mockImage(job.styleId,job.styleName,i)) : await realImage(file.buffer,file.mimetype,prompt(job.styleName,i,job.view,job.details))); job.completed++; }
+const VERSION="2.0.0-jobs"; const EST_MS = MOCK ? 2500 : 60000; // estimated time per image (no real progress from the image API)
+const STAGES=[[0,"Uploading"],[0.08,"Analysing face"],[0.3,"Applying style"],[0.65,"Rendering details"],[0.9,"Finishing"]];
+function view(job){ // computed, eased progress: never exceeds 95% until done
+  let progress=100, stage="Done";
+  if(job.status==="running"){ const frac=Math.min(1,(Date.now()-job.imgStart)/EST_MS); const eased=1-Math.pow(1-frac,2)*0.98-0.02*(1-frac);
+    progress=Math.min(95,Math.round(((job.completed+Math.min(eased,0.97))/job.total)*100)); stage=[...STAGES].reverse().find(([t])=>frac>=t)[1]; }
+  else if(job.status==="failed") stage="Failed"; else if(job.status==="cancelled") stage="Cancelled";
+  const {owner,images,...rest}=job; return {...rest,stage,progress,elapsedMs:(job.finished||Date.now())-job.created,
+    images:images.map((_,i)=>`/api/jobs/${job.id}/image/${i}`)}; }
+async function run(job, file){ // runs in background, one image at a time, cancellable
+  for(let i=0;i<job.total;i++){ if(job.status==="cancelled") break; job.imgStart=Date.now();
+    try{ job.images.push(MOCK ? (await new Promise(r=>setTimeout(r,EST_MS)), mockImage(job.styleId,job.styleName,i)) : await realImage(file.buffer,file.mimetype,prompt(job.styleName,i,job.view,job.details))); job.completed++; }
     catch(e){ job.error=String(e.message); } }
-  job.status = job.status==="cancelled" ? "cancelled" : "completed"; }
-const hits=new Map(); let demoUsed=0; const DEMO_TOTAL=Number(process.env.DEMO_TOTAL)||30; app.set("trust proxy",1);
-app.use("/api",(q,s,n)=>{const k=q.ip,now=Date.now(),w=hits.get(k)?.filter(t=>now-t<60000)||[];const lim=q.method==="POST"&&q.path==="/generate"?5:120;
- const c=w.filter(t=>lim===5?true:true).length; if(q.method==="POST"&&q.path==="/generate"){const g=(hits.get(k+"g")||[]).filter(t=>now-t<3600000); if(g.length>=3) return s.status(429).json({error:"Demo limit reached — 3 sessions per hour from one connection. Please try again later."}); g.push(now); hits.set(k+"g",g);}
- if(w.length>=120) return s.status(429).json({error:"Too many requests"}); w.push(now); hits.set(k,w); n();});
-app.get("/api/health",(_q,s)=>s.json({ok:true,mock:MOCK}));
-app.get("/api/connection",(_q,s)=>s.json({mock:MOCK,model:MOCK?null:MODEL,demoRemaining:MOCK?null:DEMO_TOTAL-demoUsed,maxPerSession:5}));
+  job.finished=Date.now();
+  job.status = job.status==="cancelled" ? "cancelled" : job.completed===0 ? "failed" : "completed"; }
+const hits=new Map(); let demoUsed=0; const DEMO_TOTAL=Number(process.env.DEMO_TOTAL)||30; app.set("trust proxy",true);
+// Real client IP: Render sits behind Cloudflare, whose edge IPs change per request; req.ip alone is unstable.
+const ipOf=q=>String(q.headers["cf-connecting-ip"]||q.headers["true-client-ip"]||(q.headers["x-forwarded-for"]||"").split(",")[0]||q.ip).trim();
+// Ownership: a random per-browser id sent as a header (stable across Cloudflare edges), not the IP.
+const clientOf=q=>{const c=String(q.headers["x-client-id"]||""); return /^[\w-]{8,64}$/.test(c)?c:"ip:"+ipOf(q);};
+app.use("/api",(q,s,n)=>{const k=ipOf(q),now=Date.now(),w=(hits.get(k)||[]).filter(t=>now-t<60000);
+ if(q.method==="POST"&&q.path==="/generate"){const g=(hits.get(k+"g")||[]).filter(t=>now-t<3600000); if(g.length>=3) return s.status(429).json({error:"Demo limit reached — 3 sessions per hour from one connection. Please try again later."}); g.push(now); hits.set(k+"g",g);}
+ if(w.length>=240) return s.status(429).json({error:"Too many requests"}); w.push(now); hits.set(k,w); n();});
+app.get("/api/health",(_q,s)=>s.json({ok:true,mock:MOCK,version:VERSION}));
+app.get("/api/connection",(_q,s)=>s.json({mock:MOCK,model:MOCK?null:MODEL,demoRemaining:MOCK?null:DEMO_TOTAL-demoUsed,maxPerSession:5,estMsPerImage:EST_MS}));
 app.post("/api/generate",upload.single("photo"),(q,s)=>{
   const count=Math.min(5,Math.max(1,Number(q.body.count)||1));
   if(!MOCK && demoUsed+count>DEMO_TOTAL) return s.status(429).json({error:"Demo limit reached — thanks for trying Persona Studio! The live demo has used its image allowance."});
   if(q.body.consent!=="true") return s.status(400).json({error:"Consent required"});
   if(!q.file||!/^image\/(jpeg|png|webp)$/.test(q.file.mimetype)) return s.status(400).json({error:"Upload a JPG, PNG or WebP photo"});
-  const job={id:randomUUID(),styleName:q.body.styleName,styleId:q.body.styleId,view:q.body.view||"mixed",details:q.body.details,total:count,completed:0,status:"running",images:[],created:Date.now()};
-  if(jobs.size>=60){const o=[...jobs.values()].sort((a,b)=>a.created-b.created)[0]; jobs.delete(o.id);} job.owner=q.ip; if(!MOCK) demoUsed+=count; jobs.set(job.id,job); run(job,q.file); s.status(202).json({id:job.id,total:count}); });
-app.get("/api/jobs",(q,s)=>s.json([...jobs.values()].filter(j=>j.owner===q.ip).map(({owner,...j})=>j).sort((a,b)=>b.created-a.created)));
-app.post("/api/jobs/:id/cancel",(q,s)=>{const j=jobs.get(q.params.id); if(j&&j.owner===q.ip&&j.status==="running") j.status="cancelled"; s.json({ok:true});});
-app.delete("/api/jobs/:id",(q,s)=>{if(jobs.get(q.params.id)?.owner===q.ip) jobs.delete(q.params.id); s.json({ok:true});});
+  const job={id:randomUUID(),styleName:q.body.styleName,styleId:q.body.styleId,view:q.body.view||"mixed",details:q.body.details,total:count,completed:0,status:"running",images:[],created:Date.now(),imgStart:Date.now()};
+  if(jobs.size>=60){const o=[...jobs.values()].sort((a,b)=>a.created-b.created)[0]; jobs.delete(o.id);} job.owner=clientOf(q); if(!MOCK) demoUsed+=count; jobs.set(job.id,job); run(job,q.file).catch(e=>{job.status="failed";job.error=String(e);}); s.status(202).json({id:job.id,jobId:job.id,total:count}); });
+app.get("/api/jobs",(q,s)=>{const c=clientOf(q); s.json([...jobs.values()].filter(j=>j.owner===c).sort((a,b)=>b.created-a.created).map(view));});
+app.get("/api/jobs/:id",(q,s)=>{const j=jobs.get(q.params.id); if(!j) return s.status(404).json({error:"This session has expired (the free server restarted). Please generate again."}); s.json(view(j));});
+app.get("/api/jobs/:id/image/:n",(q,s)=>{const d=jobs.get(q.params.id)?.images[Number(q.params.n)]; if(!d) return s.status(404).end();
+  const m=d.match(/^data:([^;]+);base64,(.*)$/); s.set("Content-Type",m[1]); s.set("Cache-Control","private, max-age=86400");
+  if(q.query.dl) s.set("Content-Disposition",`attachment; filename="persona-${q.params.n}.${m[1].includes("svg")?"svg":"png"}"`); s.send(Buffer.from(m[2],"base64"));});
+app.post("/api/jobs/:id/cancel",(q,s)=>{const j=jobs.get(q.params.id); if(j&&j.status==="running") j.status="cancelled"; s.json({ok:true});});
+app.delete("/api/jobs/:id",(q,s)=>{if(jobs.get(q.params.id)?.owner===clientOf(q)) jobs.delete(q.params.id); s.json({ok:true});});
 if(existsSync("dist")){app.use(express.static("dist")); app.get(/^(?!\/api).*/,(_q,s)=>s.sendFile(process.cwd()+"/dist/index.html"));}
 app.use((e,_q,s,_n)=>s.status(e.code==="LIMIT_FILE_SIZE"?413:500).json({error:e.code==="LIMIT_FILE_SIZE"?"Photo too large (max 5 MB)":"Server error"}));
 app.listen(Number(process.env.PORT)||8787,()=>console.log("API on :"+(process.env.PORT||8787)+", mode:",MOCK?"MOCK (set OPENAI_API_KEY for real images)":MODEL));
