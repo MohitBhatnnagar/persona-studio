@@ -14,7 +14,7 @@ async function realImage(buf, mime, p){
   const fd = new FormData(); fd.append("model", MODEL); fd.append("prompt", p); fd.append("quality","medium"); fd.append("size","1024x1536"); fd.append("image", new Blob([buf],{type:mime}), "ref.png");
   const r = await fetch("https://api.openai.com/v1/images/edits",{method:"POST",headers:{Authorization:`Bearer ${KEY}`},body:fd});
   if(!r.ok){console.error("image api",r.status,(await r.text()).slice(0,300)); throw new Error("Image service error "+r.status);} const j = await r.json(); return "data:image/png;base64,"+j.data[0].b64_json; }
-const VERSION="2.0.0-jobs"; const EST_MS = MOCK ? 2500 : 60000; // estimated time per image (no real progress from the image API)
+const VERSION="2.0.0-jobs"; const EST_MS = MOCK ? (Number(process.env.MOCK_MS) || 2500) : 60000; // estimated time per image (no real progress from the image API)
 const STAGES=[[0,"Uploading"],[0.08,"Analysing face"],[0.3,"Applying style"],[0.65,"Rendering details"],[0.9,"Finishing"]];
 function view(job){ // computed, eased progress: never exceeds 95% until done
   let progress=100, stage="Done";

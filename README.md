@@ -62,6 +62,33 @@ OPENAI_API_KEY=... IMAGE_MODEL=gpt-image-1 npm run dev
 | DELETE | `/api/jobs/:id` | Delete a job (owner only). |
 | GET | `/api/health`, `/api/connection` | Health check and mode/model/remaining demo budget. |
 
+## Tests
+
+**21 API tests, all passing** (about 11 seconds). They start the real server in mock mode on a random port (no API key, no network) and call it over HTTP using Node's built-in test runner, so there are no extra dependencies.
+
+```bash
+npm ci --omit=dev
+npm test
+```
+
+| Area | Tests | What is checked |
+|---|---|---|
+| Input validation | 5 | Missing or wrong consent, missing photo, non-image file type, photo over 5 MB returns 413 |
+| Image count | 2 | Clamped to the 5-per-session maximum; invalid or zero falls back to 1 |
+| Job lifecycle | 6 | 202 with job id; job completes with the right number of images at 100%; progress never exceeds 95% while running; SVG served with private cache header and a download filename; missing image and unknown job return 404 |
+| Cancel | 1 | Cancelling a running job stops it before all images are made |
+| Ownership | 2 | A client sees only its own jobs and cannot delete another client's job |
+| Rate limiting | 3 | The 4th session in an hour returns 429 with a clear message; the limit is per connection |
+| Health | 2 | Health and connection endpoints report mock mode and limits |
+
+I checked that the tests detect real breakage by temporarily removing the consent check, loosening the rate limit and removing the image-count clamp. Each change made the matching tests fail, and I restored the code afterwards.
+
+For fast tests the server reads an optional `MOCK_MS` environment variable (simulated seconds per image in mock mode, default 2500 ms). The tests set it to 60 ms. It has no effect in real mode.
+
+CI runs the suite on every push (`.github/workflows/ci.yml`).
+
+**Not covered:** the React front end (no component or end-to-end tests), real image-provider calls, and the global demo budget, which only applies in real mode.
+
 ## Deploy
 
 `render.yaml` deploys it as a single web service: `npm ci && npm run build`, then `node server/index.js`, with `/api/health` as the health check. The server also serves the built front end.
@@ -71,7 +98,7 @@ OPENAI_API_KEY=... IMAGE_MODEL=gpt-image-1 npm run dev
 - Jobs are held **in memory**. A server restart loses them, and the UI says so. A real deployment would move jobs and images to a database plus object storage and run the worker as a queue consumer.
 - Rate limiting is per process, so it would need a shared store such as Redis to scale beyond one instance.
 - Likeness quality depends on the provider model. There is no automated image-quality evaluation yet.
-- No automated tests yet. The next step is API tests for the validation, limit, and job-lifecycle paths.
+- No front-end tests and no real-provider integration tests (see Tests above). A browser-level end-to-end test would be the next step.
 
 ## What I learned building it
 
