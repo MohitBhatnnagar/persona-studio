@@ -1,6 +1,6 @@
 ﻿# Persona Studio
 
-Upload one photo, pick a style, get a set of stylised portraits that keep the person's identity. Live at **https://mohitstudio.dev**. Built end to end: product definition, UX, a React front end, and a small Node API that owns the image-provider key.
+Upload one photo, pick a style, get a set of stylised portraits that keep the person's identity. Live at **https://www.mohitstudio.dev**. Built end to end: product definition, UX, a React front end, and a small Node API that owns the image-provider key.
 
 ## What it does
 
