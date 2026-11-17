@@ -1,10 +1,10 @@
-# Persona Studio
+﻿# Persona Studio
 
 Upload one photo, pick a style, get a set of stylised portraits that keep the person's identity. Live at **https://mohitstudio.dev**. Built end to end: product definition, UX, a React front end, and a small Node API that owns the image-provider key.
 
 ## What it does
 
-- **30+ style presets** (anime, watercolor, Ghibli-inspired, cyberpunk, LinkedIn headshot, tarot, medieval, and more), defined in `src/styles.json` with preview art in `public/previews` and thumbnails in `public/thumbs`.
+- **29 style presets** (anime, watercolor, Ghibli-inspired, cyberpunk, LinkedIn headshot, tarot, medieval, and more), defined in `src/styles.json` with preview art in `public/previews` and thumbnails in `public/thumbs`.
 - **Variations:** 1 to 5 images per session. Each image changes outfit, scene, expression, hair and head angle while the prompt pins identity, face structure, age, ethnicity and skin tone.
 - **Framing control:** head-and-shoulders, tight close-up, three-quarter body, or a mixed rotation.
 - **Asynchronous jobs** with progress, cancel, download, and delete, so the UI never blocks on a slow image API.
